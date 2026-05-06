@@ -2242,30 +2242,43 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     /* BUY SCAN ACTION BAR */
-    .scan-hero-bar {
-      display:flex; align-items:center; justify-content:space-between; gap:16px;
-      padding:0 0 20px; flex-wrap:wrap;
-    }
-    .scan-hero-copy { display:flex; flex-direction:column; gap:4px; flex:1; min-width:0; }
+    .scan-hero-bar { display:none; }
     .scan-hero-title { display:none; }
-    .scan-hero-note { font-size:13px; color:var(--muted); line-height:1.5; }
-    .scan-hero-actions { display:flex; align-items:center; gap:12px; flex-shrink:0; }
     .scan-status-text { font-size:11px; color:var(--muted); font-weight:500; }
-    .btn-scan-primary {
-      display:flex; align-items:center; gap:8px;
-      background:var(--accent); color:#fff; border:none; border-radius:9px;
-      padding:11px 22px; font-size:13px; font-weight:700; cursor:pointer;
-      font-family:inherit; transition:opacity .15s, transform .1s, box-shadow .15s;
-      letter-spacing:-.01em; box-shadow:0 2px 12px rgba(37,99,235,.35);
-      white-space:nowrap;
-    }
-    .btn-scan-primary:hover { opacity:.9; box-shadow:0 4px 18px rgba(37,99,235,.45); }
-    .btn-scan-primary:active { transform:scale(.97); }
-    .btn-scan-primary:disabled { opacity:.4; cursor:not-allowed; box-shadow:none; }
-    .btn-scan-primary svg { flex-shrink:0; }
-    /* keep btn-scan-run for any legacy references */
     .btn-scan-run { display:none; }
+    /* ── Hero scan CTA ───────────────────────────────── */
+    .scan-cta-wrap {
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      gap:18px; padding:80px 24px 80px; text-align:center;
+    }
+    .scan-cta-label { font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.04em; text-transform:uppercase; }
+    .scan-cta-sub { font-size:13px; color:var(--muted); max-width:340px; line-height:1.6; }
+    .btn-scan-hero {
+      display:flex; align-items:center; gap:9px;
+      background:var(--accent); color:#fff; border:none; border-radius:10px;
+      padding:12px 30px; font-size:14px; font-weight:700; cursor:pointer;
+      font-family:inherit; letter-spacing:-.01em;
+      box-shadow:0 0 0 0 rgba(37,99,235,.5);
+      animation:hero-pulse 2.2s ease-in-out infinite;
+      transition:opacity .15s, transform .1s;
+    }
+    .btn-scan-hero:hover { opacity:.92; animation:none; box-shadow:0 4px 20px rgba(37,99,235,.45); }
+    .btn-scan-hero:active { transform:scale(.97); }
+    .btn-scan-hero:disabled { opacity:.4; cursor:not-allowed; animation:none; box-shadow:none; }
+    @keyframes hero-pulse {
+      0%,100% { box-shadow:0 0 0 0 rgba(37,99,235,.45); }
+      50%      { box-shadow:0 0 0 14px rgba(37,99,235,.0); }
+    }
     @keyframes spin { to { transform:rotate(360deg); } }
+    /* rescan button shown when results exist */
+    .btn-rescan {
+      display:flex; align-items:center; gap:6px;
+      background:none; border:1px solid var(--line); color:var(--muted);
+      border-radius:7px; padding:6px 14px; font-size:12px; font-weight:600;
+      cursor:pointer; font-family:inherit; transition:color .15s, border-color .15s;
+    }
+    .btn-rescan:hover { color:var(--ink); border-color:var(--muted); }
+    .btn-rescan:disabled { opacity:.4; cursor:not-allowed; }
     /* Sell modal */
     .sell-row { display:flex; align-items:baseline; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line); }
     .sell-row:last-child { border-bottom:none; }
@@ -2324,7 +2337,7 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div id="authBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:999;background:#b91c1c;color:#fff;font-size:13px;font-weight:600;text-align:center;padding:9px 16px;letter-spacing:.01em;">
-  Schwab session expired &mdash; <a href="/setup" style="color:#fff;text-decoration:underline;">reconnect in Setup &amp; Auth</a>
+  Schwab session expired. <a href="/setup" style="color:#fff;text-decoration:underline;">Reconnect in Setup &amp; Auth</a>
   <button onclick="$('authBanner').style.display='none'" style="margin-left:16px;background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;">Dismiss</button>
 </div>
 
@@ -2531,25 +2544,16 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
     <!-- BUY SCAN (default page) -->
     <div class="page active" id="page-buyscan">
       <div class="page-inner">
-        <div class="scan-hero-bar">
-          <div class="scan-hero-copy">
-            <div class="scan-hero-note">The AI scans your watchlist for buys and your portfolio for exits. Tap <strong style="color:var(--ink);">Scan</strong> — review any ideas it surfaces, then approve or pass. Nothing trades automatically.</div>
-          </div>
-          <div class="scan-hero-actions">
-            <span id="agentStatus" class="scan-status-text"></span>
-            <button class="btn-scan-primary" id="scanBtn" onclick="runFullScan()">
-              <svg id="scanIcon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <div id="scanBody">
+          <div class="scan-cta-wrap">
+            <button class="btn-scan-hero" id="scanBtn" onclick="runFullScan()">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="23 4 23 10 17 10"/>
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
               </svg>
               Scan
             </button>
-          </div>
-        </div>
-        <div id="scanBody">
-          <div class="empty-state">
-            <div class="empty-title">Loading opportunity queue...</div>
-            <div class="empty-body">Pulling the latest scan results and review status for current trade ideas.</div>
+            <div class="scan-cta-sub" id="agentStatus">You approve every trade.</div>
           </div>
         </div>
       </div>
@@ -3562,7 +3566,7 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
     setTimeout(() => {
       const inp = document.getElementById('chatInput');
       if (!inp) return;
-      inp.value = 'Tell me about ' + symbol + ' — current thesis, key risks, and whether I should hold, add, or trim my position.';
+      inp.value = 'Tell me about ' + symbol + ': current thesis, key risks, and whether I should hold, add, or trim my position.';
       inp.dispatchEvent(new Event('input'));
       if (typeof chatStreaming !== 'undefined' && !chatStreaming) sendMessage();
     }, 200);
@@ -3848,7 +3852,7 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             const totalStr = total ? ' &middot; ~$' + total.toLocaleString(undefined,{maximumFractionDigits:0}) : '';
             const detail = isExec
               ? '<strong>' + qty + ' shares</strong> @ ' + priceStr + totalStr
-              : qty + ' shares @ ' + priceStr + ' — not executed';
+              : qty + ' shares @ ' + priceStr + ', not executed';
             const buyAnywayBtn = isExec ? '' : '<button class="btn-review-again" data-pid="' + p.id + '" data-action="execute">Review Again</button>';
             const quickSellBtn = (isExec && p.action === 'BUY') ? '<button class="sell-pos-btn" data-sym="' + _esc(p.symbol) + '" style="background:none;border:1px solid rgba(239,68,68,0.3);color:var(--red);border-radius:5px;padding:3px 9px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;margin-right:6px;">Sell</button>' : '';
 
@@ -3935,8 +3939,7 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       const agentSt = await statusR.json();
       const alerts = await alertsR.json();
 
-      const el = $('agentStatus');
-      if (el) el.textContent = 'Auto-scans every ' + agentSt.check_interval_minutes + ' minutes';
+      // agentStatus intentionally left blank — auto-scan copy removed
 
       // Split buy vs sell/exit scan alerts
       const buyScanAlerts  = alerts.filter(a => a.alert_type === 'BUY_SCAN');
@@ -3960,14 +3963,18 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
         const noSell = !sellScanAlerts.length;
 
         if (noBuy && noSell) {
-          scanBodyEl.innerHTML = renderEmptyState(
-            'No trade ideas yet',
-            'Tap Scan above — the AI will research your watchlist for buys and review your portfolio for exits.',
-            'Scan Now',
-            'runFullScan()'
-          );
+          scanBodyEl.innerHTML = '<div class="scan-cta-wrap">'
+            + '<button class="btn-scan-hero" id="scanBtn" onclick="runFullScan()">'
+            + '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>'
+            + 'Scan</button>'
+            + '<div class="scan-cta-sub" id="agentStatus">You approve every trade.</div>'
+            + '</div>';
         } else {
-          let html = '';
+          const rescanBtn = '<div style="display:flex;justify-content:flex-end;margin-bottom:12px;">'
+            + '<button class="btn-rescan" id="scanBtn" onclick="runFullScan()">'
+            + '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>'
+            + 'Rescan</button></div>';
+          let html = rescanBtn;
 
           // \u2500\u2500 Buy ideas \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
           if (buyScanAlerts.length) {
@@ -4038,28 +4045,31 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
     }
   }
 
+  const _scanSvg = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
+  const _scanSvgSpin = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
+
   async function runFullScan() {
-    const btn = $('scanBtn');
-    const icon = $('scanIcon');
-    btn.disabled = true;
-    btn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Scanning…';
     const scanBodyEl = $('scanBody');
+    // Show hero-style scanning state in scanBody (replaces whatever was there)
     if (scanBodyEl) {
-      scanBodyEl.innerHTML = '<div class="empty-state"><div class="empty-title">Scanning your watchlist and portfolio…</div><div class="empty-body">The AI is researching buy ideas and reviewing open positions for exits. This takes 30–60 seconds.</div></div>';
+      scanBodyEl.innerHTML = '<div class="scan-cta-wrap">'
+        + '<button class="btn-scan-hero" disabled id="scanBtn">' + _scanSvgSpin + ' Scanning</button>'
+        + '<div class="scan-cta-sub">Researching buys and reviewing exits...</div>'
+        + '</div>';
     }
     try {
-      const [buyR, sellR] = await Promise.allSettled([
+      await Promise.allSettled([
         fetch('/api/v1/agent/run-buy-scan', { method: 'POST' }).then(r => r.json()),
         fetch('/api/v1/agent/run-sell-scan', { method: 'POST' }).then(r => r.json()),
       ]);
       await loadAgentAlerts();
     } catch(e) {
       if (scanBodyEl) {
-        scanBodyEl.innerHTML = '<div class="empty-state" style="--empty-tone:var(--red)"><div class="empty-title">Scan failed</div><div class="empty-body">' + _esc(e.message) + '</div><div class="empty-actions"><button class="empty-btn empty-btn-primary" onclick="runFullScan()">Try again</button></div></div>';
+        scanBodyEl.innerHTML = '<div class="scan-cta-wrap">'
+          + '<button class="btn-scan-hero" id="scanBtn" onclick="runFullScan()">' + _scanSvg + ' Scan</button>'
+          + '<div class="scan-cta-sub" style="color:var(--red);">Scan failed. Try again.</div>'
+          + '</div>';
       }
-    } finally {
-      btn.disabled = false;
-      btn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Scan';
     }
   }
 
@@ -4623,7 +4633,7 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       $('tAiLoading').style.display = 'none';
       const btn = $('tGetAiBtn');
       btn.style.display = 'flex';
-      btn.textContent = 'Retry — ' + e.message;
+      btn.textContent = 'Retry: ' + e.message;
       btn.style.color = 'var(--red)';
       btn.style.borderColor = 'rgba(239,68,68,.3)';
     }
