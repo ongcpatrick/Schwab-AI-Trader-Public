@@ -2243,28 +2243,29 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
 
     /* BUY SCAN ACTION BAR */
     .scan-hero-bar {
-      display:flex; align-items:center; gap:12px; flex-wrap:wrap;
-      padding:0 0 16px;
+      display:flex; align-items:center; justify-content:space-between; gap:16px;
+      padding:0 0 20px; flex-wrap:wrap;
     }
-    .scan-hero-copy { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
-    .scan-hero-title {
-      font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase;
-      color:var(--muted); opacity:.6;
-    }
-    .scan-hero-note { font-size:12px; color:var(--muted); line-height:1.4; }
-    .scan-hero-actions {
-      display:flex; align-items:center; gap:8px; flex-wrap:wrap; flex-shrink:0;
-    }
-    .btn-scan-run {
-      background:var(--green); color:#050a0e; border:none; border-radius:8px;
-      padding:8px 18px; font-size:12px; font-weight:700; cursor:pointer;
-      font-family:inherit; transition:opacity .15s, transform .1s;
-      letter-spacing:-.01em;
-    }
-    .btn-scan-run:hover { opacity:.88; }
-    .btn-scan-run:active { transform:scale(.97); }
-    .btn-scan-run:disabled { opacity:.35; cursor:not-allowed; }
+    .scan-hero-copy { display:flex; flex-direction:column; gap:4px; flex:1; min-width:0; }
+    .scan-hero-title { display:none; }
+    .scan-hero-note { font-size:13px; color:var(--muted); line-height:1.5; }
+    .scan-hero-actions { display:flex; align-items:center; gap:12px; flex-shrink:0; }
     .scan-status-text { font-size:11px; color:var(--muted); font-weight:500; }
+    .btn-scan-primary {
+      display:flex; align-items:center; gap:8px;
+      background:var(--accent); color:#fff; border:none; border-radius:9px;
+      padding:11px 22px; font-size:13px; font-weight:700; cursor:pointer;
+      font-family:inherit; transition:opacity .15s, transform .1s, box-shadow .15s;
+      letter-spacing:-.01em; box-shadow:0 2px 12px rgba(37,99,235,.35);
+      white-space:nowrap;
+    }
+    .btn-scan-primary:hover { opacity:.9; box-shadow:0 4px 18px rgba(37,99,235,.45); }
+    .btn-scan-primary:active { transform:scale(.97); }
+    .btn-scan-primary:disabled { opacity:.4; cursor:not-allowed; box-shadow:none; }
+    .btn-scan-primary svg { flex-shrink:0; }
+    /* keep btn-scan-run for any legacy references */
+    .btn-scan-run { display:none; }
+    @keyframes spin { to { transform:rotate(360deg); } }
     /* Sell modal */
     .sell-row { display:flex; align-items:baseline; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line); }
     .sell-row:last-child { border-bottom:none; }
@@ -2532,13 +2533,17 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="page-inner">
         <div class="scan-hero-bar">
           <div class="scan-hero-copy">
-            <div class="scan-hero-title">Trade Ideas</div>
-            <div class="scan-hero-note">AI-researched buys and exits. Nothing executes without your approval.</div>
+            <div class="scan-hero-note">The AI scans your watchlist for buys and your portfolio for exits. Tap <strong style="color:var(--ink);">Scan</strong> — review any ideas it surfaces, then approve or pass. Nothing trades automatically.</div>
           </div>
           <div class="scan-hero-actions">
             <span id="agentStatus" class="scan-status-text"></span>
-            <button class="btn-scan-run btn-scan-exit" id="exitScanBtn" onclick="runSellScan()" style="background:rgba(239,68,68,0.12);color:var(--red);border:1px solid rgba(239,68,68,0.25);margin-right:8px;">Exits</button>
-            <button class="btn-scan-run" id="buyCheckBtn" onclick="runBuyScan()">Buys</button>
+            <button class="btn-scan-primary" id="scanBtn" onclick="runFullScan()">
+              <svg id="scanIcon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+              Scan
+            </button>
           </div>
         </div>
         <div id="scanBody">
@@ -3957,9 +3962,9 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
         if (noBuy && noSell) {
           scanBodyEl.innerHTML = renderEmptyState(
             'No trade ideas yet',
-            'Hit Buys to find high-conviction ideas, or Exits to review positions worth trimming.',
-            'Find Buys',
-            'runBuyScan()'
+            'Tap Scan above — the AI will research your watchlist for buys and review your portfolio for exits.',
+            'Scan Now',
+            'runFullScan()'
           );
         } else {
           let html = '';
@@ -4033,75 +4038,33 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
     }
   }
 
-  async function runBuyScan() {
-    const btn = $('buyCheckBtn');
+  async function runFullScan() {
+    const btn = $('scanBtn');
+    const icon = $('scanIcon');
     btn.disabled = true;
-    btn.textContent = 'Scanning...';
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Scanning…';
     const scanBodyEl = $('scanBody');
     if (scanBodyEl) {
-      scanBodyEl.innerHTML = renderEmptyState(
-        'Scanning for new ideas',
-        'The agent is researching the watchlist now. Expect this to take about 30 to 60 seconds.',
-        null,
-        null
-      );
+      scanBodyEl.innerHTML = '<div class="empty-state"><div class="empty-title">Scanning your watchlist and portfolio…</div><div class="empty-body">The AI is researching buy ideas and reviewing open positions for exits. This takes 30–60 seconds.</div></div>';
     }
     try {
-      const r = await fetch('/api/v1/agent/run-buy-scan', { method: 'POST' });
-      const d = await r.json();
-      if (d.status === 'no_candidates') {
-        if (scanBodyEl) {
-          scanBodyEl.innerHTML = renderEmptyState(
-            'Nothing stood out this pass',
-            'No stock cleared the budget and confidence filters. Try again later or adjust your watchlist.',
-            'Scan again',
-            'runBuyScan()'
-          );
-        }
-        setTimeout(loadAgentAlerts, 1800);
-      } else {
-        showPage('buyscan');
-        await loadAgentAlerts();
-      }
+      const [buyR, sellR] = await Promise.allSettled([
+        fetch('/api/v1/agent/run-buy-scan', { method: 'POST' }).then(r => r.json()),
+        fetch('/api/v1/agent/run-sell-scan', { method: 'POST' }).then(r => r.json()),
+      ]);
+      await loadAgentAlerts();
     } catch(e) {
       if (scanBodyEl) {
-        scanBodyEl.innerHTML = renderEmptyState(
-          'Scan failed',
-          e.message,
-          'Try again',
-          'runBuyScan()',
-          'danger'
-        );
+        scanBodyEl.innerHTML = '<div class="empty-state" style="--empty-tone:var(--red)"><div class="empty-title">Scan failed</div><div class="empty-body">' + _esc(e.message) + '</div><div class="empty-actions"><button class="empty-btn empty-btn-primary" onclick="runFullScan()">Try again</button></div></div>';
       }
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Buys';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Scan';
     }
   }
 
-  async function runSellScan() {
-    const btn = $('exitScanBtn');
-    if (!btn) return;
-    btn.disabled = true;
-    btn.textContent = 'Scanning...';
-    const scanBodyEl = $('scanBody');
-    try {
-      const r = await fetch('/api/v1/agent/run-sell-scan', { method: 'POST' });
-      const d = await r.json();
-      if (d.status === 'no_candidates') {
-        btn.textContent = 'No exits needed';
-        setTimeout(() => { btn.textContent = 'Exits'; }, 4000);
-        await loadAgentAlerts();
-      } else {
-        await loadAgentAlerts();
-      }
-    } catch(e) {
-      btn.textContent = 'Scan failed';
-      setTimeout(() => { btn.textContent = 'Exits'; }, 3000);
-    } finally {
-      btn.disabled = false;
-    }
-  }
+  function runBuyScan() { return runFullScan(); }
+  function runSellScan() { return runFullScan(); }
 
   // ── Insider / Congressional Feed ───────────────────────────────────────────
 
