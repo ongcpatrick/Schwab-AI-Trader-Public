@@ -148,14 +148,25 @@ def _event_from_transaction(
         if not isinstance(item, Mapping):
             continue
         instrument = item.get("instrument")
-        if (
+        is_currency = (
             isinstance(instrument, Mapping)
+            and (
+                str(instrument.get("assetType", "")).upper() == "CURRENCY"
+                or str(instrument.get("symbol", "")) == "CURRENCY_USD"
+            )
+        )
+        if (
+            not is_currency
+            and isinstance(instrument, Mapping)
             and instrument.get("symbol") is not None
             and symbol is None
         ):
             symbol = str(instrument["symbol"])
         if position_effect is None and item.get("positionEffect") is not None:
             position_effect = str(item["positionEffect"])
+        # skip cash/currency legs — they corrupt quantity and price averages
+        if is_currency:
+            continue
         amount = item.get("amount")
         price = item.get("price")
         if amount is None or price is None:
