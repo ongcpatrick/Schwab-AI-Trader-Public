@@ -2537,8 +2537,8 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
           </div>
           <div class="scan-hero-actions">
             <span id="agentStatus" class="scan-status-text"></span>
-            <button class="btn-scan-run btn-scan-exit" id="exitScanBtn" onclick="runSellScan()" style="background:rgba(239,68,68,0.12);color:var(--red);border:1px solid rgba(239,68,68,0.25);margin-right:8px;">Exit Scan</button>
-            <button class="btn-scan-run" id="buyCheckBtn" onclick="runBuyScan()">Opportunity Scan</button>
+            <button class="btn-scan-run btn-scan-exit" id="exitScanBtn" onclick="runSellScan()" style="background:rgba(239,68,68,0.12);color:var(--red);border:1px solid rgba(239,68,68,0.25);margin-right:8px;">Exits</button>
+            <button class="btn-scan-run" id="buyCheckBtn" onclick="runBuyScan()">Buys</button>
           </div>
         </div>
         <div id="scanBody">
@@ -3957,8 +3957,8 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
         if (noBuy && noSell) {
           scanBodyEl.innerHTML = renderEmptyState(
             'No trade ideas yet',
-            'Run an opportunity scan to surface high-conviction buys, or an exit scan to review positions worth trimming.',
-            'Opportunity Scan',
+            'Hit Buys to find high-conviction ideas, or Exits to review positions worth trimming.',
+            'Find Buys',
             'runBuyScan()'
           );
         } else {
@@ -4052,9 +4052,9 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       if (d.status === 'no_candidates') {
         if (scanBodyEl) {
           scanBodyEl.innerHTML = renderEmptyState(
-            'No high-conviction ideas right now',
-            'Nothing in the watchlist cleared the current budget and confidence filters on this pass.',
-            'Run again later',
+            'Nothing stood out this pass',
+            'No stock cleared the budget and confidence filters. Try again later or adjust your watchlist.',
+            'Scan again',
             'runBuyScan()'
           );
         }
@@ -4066,7 +4066,7 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
     } catch(e) {
       if (scanBodyEl) {
         scanBodyEl.innerHTML = renderEmptyState(
-          'Opportunity scan failed',
+          'Scan failed',
           e.message,
           'Try again',
           'runBuyScan()',
@@ -4075,7 +4075,7 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       }
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Opportunity Scan';
+      btn.textContent = 'Buys';
     }
   }
 
@@ -4090,14 +4090,14 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       const d = await r.json();
       if (d.status === 'no_candidates') {
         btn.textContent = 'No exits needed';
-        setTimeout(() => { btn.textContent = 'Exit Scan'; }, 4000);
+        setTimeout(() => { btn.textContent = 'Exits'; }, 4000);
         await loadAgentAlerts();
       } else {
         await loadAgentAlerts();
       }
     } catch(e) {
       btn.textContent = 'Scan failed';
-      setTimeout(() => { btn.textContent = 'Exit Scan'; }, 3000);
+      setTimeout(() => { btn.textContent = 'Exits'; }, 3000);
     } finally {
       btn.disabled = false;
     }
