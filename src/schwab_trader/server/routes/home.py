@@ -2344,14 +2344,14 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
   <nav class="sidebar-nav">
-    <div class="nav-section-label">Opportunities</div>
+    <div class="nav-section-label">Ideas</div>
     <a class="nav-item featured active" data-page="buyscan" onclick="showPage('buyscan');return false;" href="#">
       <span class="nav-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
         </svg>
       </span>
-      <span class="nav-label">Opportunities</span>
+      <span class="nav-label">Trade Ideas</span>
       <span class="nav-badge green" id="scanBadge" style="display:none;"></span>
     </a>
 
@@ -2374,16 +2374,6 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
         </svg>
       </span>
       <span class="nav-label">Holdings</span>
-    </a>
-    <a class="nav-item" data-page="alerts" onclick="showPage('alerts');return false;" href="#">
-      <span class="nav-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 22c1.1 0 2-.9 2-2H10c0 1.1.9 2 2 2z"/>
-          <path d="M18.4 10.6C18.4 7 15.6 4 12 4S5.6 7 5.6 10.6c0 5.6-2.6 7.4-2.6 7.4h18s-2.6-1.8-2.6-7.4z"/>
-        </svg>
-      </span>
-      <span class="nav-label">Risk Monitor</span>
-      <span class="nav-badge" id="alertBadge" style="display:none;"></span>
     </a>
     <a class="nav-item" data-page="insiders" onclick="showPage('insiders');loadInsiders();return false;" href="#">
       <span class="nav-icon">
@@ -2468,7 +2458,7 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       <div>
         <div class="topbar-kicker">Trading Workspace</div>
         <div class="topbar-heading">
-          <span class="topbar-title" id="topbarTitle">Opportunity Queue</span>
+          <span class="topbar-title" id="topbarTitle">Trade Ideas</span>
           <span class="topbar-pill" id="topbarPill">Live approvals</span>
         </div>
         <div class="topbar-subtitle" id="topbarSubtitle">Review AI trade ideas, run scans, and only send a live order after preview plus confirmation.</div>
@@ -2542,12 +2532,13 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="page-inner">
         <div class="scan-hero-bar">
           <div class="scan-hero-copy">
-            <div class="scan-hero-title">Opportunity Queue</div>
-            <div class="scan-hero-note">AI-researched trade ideas. Nothing executes without your approval.</div>
+            <div class="scan-hero-title">Trade Ideas</div>
+            <div class="scan-hero-note">AI-researched buys and exits. Nothing executes without your approval.</div>
           </div>
           <div class="scan-hero-actions">
             <span id="agentStatus" class="scan-status-text"></span>
-            <button class="btn-scan-run" id="buyCheckBtn" onclick="runBuyScan()">Run Opportunity Scan</button>
+            <button class="btn-scan-run btn-scan-exit" id="exitScanBtn" onclick="runSellScan()" style="background:rgba(239,68,68,0.12);color:var(--red);border:1px solid rgba(239,68,68,0.25);margin-right:8px;">Exit Scan</button>
+            <button class="btn-scan-run" id="buyCheckBtn" onclick="runBuyScan()">Opportunity Scan</button>
           </div>
         </div>
         <div id="scanBody">
@@ -2681,28 +2672,6 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- ALERTS -->
-    <div class="page" id="page-alerts">
-      <div class="page-inner">
-        <div class="panel" id="agentPanel">
-          <div class="panel-header">
-            <span class="panel-title">Risk Monitor</span>
-            <div class="panel-meta">
-              <button class="btn" id="runCheckBtn" onclick="runAgentCheck()" style="font-size:12px;">Run Risk Scan</button>
-              <button class="btn" id="runSellScanBtn" onclick="runSellScan()" style="font-size:12px;">Run Sell Scan</button>
-              <button class="btn" onclick="loadAgentAlerts()" style="font-size:12px;">↺ Refresh</button>
-            </div>
-          </div>
-          <div class="panel-helper">AI scans your portfolio for concentration risk, earnings traps, downside momentum, and stop-loss breaches. Nothing trades — alerts only.</div>
-          <div id="agentBody" style="padding:0 0 4px;">
-            <div class="empty-state" style="margin:0 18px 18px;">
-              <div class="empty-title">Loading risk monitor...</div>
-              <div class="empty-body">Pulling the latest portfolio scan results and alert history.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- INSIDERS -->
     <div class="page" id="page-insiders">
@@ -3381,9 +3350,9 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
     if (ni) ni.classList.add('active');
     const titles = {
       buyscan: {
-        title: 'Opportunity Queue',
+        title: 'Trade Ideas',
         pill: 'Live approvals',
-        subtitle: 'Review fresh ideas, run scans on demand, and move to live orders only after preview plus confirmation.',
+        subtitle: 'Buy opportunities and exit suggestions from the AI. Nothing executes without your approval.',
       },
       overview: {
         title: 'Morning Briefing',
@@ -3394,11 +3363,6 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
         title: 'Holdings',
         pill: 'Live positions',
         subtitle: 'Monitor exposure, returns, and position-level detail without leaving the main workspace.',
-      },
-      alerts: {
-        title: 'Risk Monitor',
-        pill: 'Scan history',
-        subtitle: 'Track open issues, acknowledge what you have reviewed, and keep the portfolio watchlist clean.',
       },
       performance: {
         title: 'Performance',
@@ -3535,7 +3499,9 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
 
     const price     = quote?.lastPrice || quote?.mark || (pos ? pos.mktVal / Math.abs(pos.qty) : 0);
     const change    = quote?.netChange ?? 0;
-    const changePct = quote?.netPercentChangeInDouble ?? 0;
+    // Schwab sometimes omits netPercentChangeInDouble — derive from price/change if so
+    let changePct   = quote?.netPercentChangeInDouble ?? 0;
+    if (!changePct && change !== 0 && price > 0) changePct = (change / (price - change)) * 100;
     const w52lo     = quote?.['52WkLow'] || 0;
     const w52hi     = quote?.['52WkHigh'] || 0;
     const pct52     = (w52hi > w52lo && price) ? Math.round((price - w52lo) / (w52hi - w52lo) * 100) : null;
@@ -3563,18 +3529,23 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     if (pos) {
+      // Recalculate dayPct from dayPnl — Schwab's currentDayProfitLossPercentage is unreliable
+      const prevMktVal = pos.mktVal - pos.dayPnl;
+      const dayPct = (prevMktVal > 0 && pos.dayPnl !== 0)
+        ? (pos.dayPnl / prevMktVal) * 100
+        : (changePct || pos.dayPct || 0);
       html += '<div class="stat-section">YOUR POSITION</div>'
         + '<div class="stat-row"><span>Shares</span><span>' + pos.qty + '</span></div>'
         + '<div class="stat-row"><span>Avg Cost</span><span>$' + pos.avgCost.toFixed(2) + '</span></div>'
         + '<div class="stat-row"><span>Market Value</span><span>' + usd(pos.mktVal) + '</span></div>'
         + '<div class="stat-row"><span>Total P&L</span><span style="color:' + (pos.totalPnl >= 0 ? '#3fb950' : '#f85149') + '">'
         + (pos.totalPnl >= 0 ? '+' : '') + usd(pos.totalPnl) + ' (' + (pos.totalPct >= 0 ? '+' : '') + pos.totalPct.toFixed(1) + '%)</span></div>'
-        + '<div class="stat-row"><span>Today\'s P&L</span><span style="color:' + (pos.dayPnl >= 0 ? '#3fb950' : '#f85149') + '">'
-        + (pos.dayPnl >= 0 ? '+' : '') + usd(pos.dayPnl) + ' (' + (pos.dayPct >= 0 ? '+' : '') + (pos.dayPct || 0).toFixed(2) + '%)</span></div>'
+        + '<div class="stat-row"><span>Today&#39;s P&L</span><span style="color:' + (pos.dayPnl >= 0 ? '#3fb950' : '#f85149') + '">'
+        + (pos.dayPnl >= 0 ? '+' : '') + usd(pos.dayPnl) + ' (' + (dayPct >= 0 ? '+' : '') + dayPct.toFixed(2) + '%)</span></div>'
         + '<div class="stat-row"><span>Portfolio Weight</span><span>' + pos.weight.toFixed(1) + '% of portfolio</span></div>';
     }
 
-    html += '<div style="margin-top:18px"><button class="btn-sm" style="width:100%" onclick="askClaudeAbout(\'' + symbol + '\')">'
+    html += '<div style="margin-top:18px"><button class="btn-sm" style="width:100%" data-sym="' + symbol + '" onclick="askClaudeAbout(this.dataset.sym)">'
       + 'Ask Claude about ' + symbol + ' →</button></div>';
 
     $('statBody').innerHTML = html;
@@ -3962,76 +3933,68 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       const el = $('agentStatus');
       if (el) el.textContent = 'Auto-scans every ' + agentSt.check_interval_minutes + ' minutes';
 
-      // Split buy scan vs portfolio/sell alerts
-      const buyScanAlerts = alerts.filter(a => a.alert_type === 'BUY_SCAN');
-      const portAlerts    = alerts.filter(a => a.alert_type !== 'BUY_SCAN');
+      // Split buy vs sell/exit scan alerts
+      const buyScanAlerts  = alerts.filter(a => a.alert_type === 'BUY_SCAN');
+      const sellScanAlerts = alerts.filter(a => a.alert_type === 'SELL_SCAN');
 
-      // Pending counts
+      // Pending counts for badge
       const pendingBuy  = buyScanAlerts.filter(a => a.status === 'pending').reduce((s,a) => s + (a.proposals||[]).filter(p=>p.status==='pending').length, 0);
-      const pendingPort = portAlerts.filter(a => a.status === 'pending').length;
+      const pendingSell = sellScanAlerts.filter(a => a.status === 'pending').reduce((s,a) => s + (a.proposals||[]).filter(p=>p.status==='pending').length, 0);
+      const pendingTotal = pendingBuy + pendingSell;
 
       const scanBadgeEl = $('scanBadge');
       if (scanBadgeEl) {
-        if (pendingBuy > 0) { scanBadgeEl.textContent = pendingBuy; scanBadgeEl.style.display = 'inline'; }
+        if (pendingTotal > 0) { scanBadgeEl.textContent = pendingTotal; scanBadgeEl.style.display = 'inline'; }
         else scanBadgeEl.style.display = 'none';
       }
-      const alertBadgeEl = $('alertBadge');
-      if (alertBadgeEl) {
-        if (pendingPort > 0) { alertBadgeEl.textContent = pendingPort; alertBadgeEl.style.display = 'inline'; }
-        else alertBadgeEl.style.display = 'none';
-      }
 
-      // Populate Buy Scan page
+      // Populate Trade Ideas page (buy + exit scans together)
       const scanBodyEl = $('scanBody');
       if (scanBodyEl) {
-        if (!buyScanAlerts.length) {
+        const noBuy  = !buyScanAlerts.length;
+        const noSell = !sellScanAlerts.length;
+
+        if (noBuy && noSell) {
           scanBodyEl.innerHTML = renderEmptyState(
-            'No opportunity scans yet',
-            'Run the opportunity scan to have the agent research your watchlist and surface the highest-conviction ideas that fit your budget.',
-            'Run opportunity scan',
+            'No trade ideas yet',
+            'Run an opportunity scan to surface high-conviction buys, or an exit scan to review positions worth trimming.',
+            'Opportunity Scan',
             'runBuyScan()'
           );
         } else {
-          const latest = buyScanAlerts[0];
-          const prev   = buyScanAlerts.slice(1);
-          let html = _renderAlertCard(latest);
-          if (prev.length) {
-            html += '<div id="prevScanWrap" style="display:none;">' + prev.map(_renderAlertCard).join('') + '</div>'
-              + '<div style="padding:8px 18px 14px;text-align:center;">'
-              + '<button onclick="var w=$(`prevScanWrap`);w.style.display=w.style.display===`none`?``:`none`;this.textContent=w.style.display===``?`\u25b2 Hide previous`:`\u25bc ' + prev.length + ' previous scan' + (prev.length>1?'s':'') + '`;"'
-              + ' style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;">'
-              + '\u25bc ' + prev.length + ' previous scan' + (prev.length>1?'s':'') + '</button></div>';
-          }
-          scanBodyEl.innerHTML = html;
-        }
-      }
+          let html = '';
 
-      // Populate Alerts page
-      const agentBodyEl = $('agentBody');
-      if (agentBodyEl) {
-        if (!portAlerts.length) {
-          agentBodyEl.innerHTML = renderEmptyState(
-            'No risk alerts right now',
-            'Run a risk scan to refresh the monitor and look for new issues in the live portfolio.',
-            'Run risk scan',
-            'runAgentCheck()'
-          );
-        } else {
-          const latest = portAlerts[0];
-          const prev   = portAlerts.slice(1);
-          let html = _renderAlertCard(latest);
-          if (prev.length) {
-            html += '<div id="prevScansWrap" style="display:none;">'
-              + prev.map(_renderAlertCard).join('')
-              + '</div>'
-              + '<div style="padding:8px 18px 14px;text-align:center;">'
-              + '<button onclick="var w=$(`prevScansWrap`);w.style.display=w.style.display===`none`?``:`none`;this.textContent=w.style.display===``?`\u25b2 Hide previous scans`:`\u25bc '
-              + prev.length + ' previous scan' + (prev.length > 1 ? 's' : '') + '`;"'
-              + ' style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;">'
-              + '\u25bc ' + prev.length + ' previous scan' + (prev.length > 1 ? 's' : '')
-              + '</button></div>';
+          // \u2500\u2500 Buy ideas \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+          if (buyScanAlerts.length) {
+            const latestBuy = buyScanAlerts[0];
+            const prevBuy   = buyScanAlerts.slice(1);
+            html += '<div class="scan-section-head" style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.07em;padding:4px 0 10px;">Opportunities</div>';
+            html += _renderAlertCard(latestBuy);
+            if (prevBuy.length) {
+              html += '<div id="prevBuyWrap" style="display:none;">' + prevBuy.map(_renderAlertCard).join('') + '</div>'
+                + '<div style="padding:4px 18px 14px;text-align:center;">'
+                + '<button onclick="var w=$(`prevBuyWrap`);w.style.display=w.style.display===`none`?``:`none`;this.textContent=w.style.display===``?`\u25b2 Hide previous`:`\u25bc ' + prevBuy.length + ' previous`;"'
+                + ' style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;">'
+                + '\u25bc ' + prevBuy.length + ' previous</button></div>';
+            }
           }
-          agentBodyEl.innerHTML = html;
+
+          // \u2500\u2500 Exit suggestions \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+          if (sellScanAlerts.length) {
+            html += '<div class="scan-section-head" style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.07em;padding:14px 0 10px;border-top:1px solid var(--line);margin-top:12px;">Exit Suggestions</div>';
+            const latestSell = sellScanAlerts[0];
+            const prevSell   = sellScanAlerts.slice(1);
+            html += _renderAlertCard(latestSell);
+            if (prevSell.length) {
+              html += '<div id="prevSellWrap" style="display:none;">' + prevSell.map(_renderAlertCard).join('') + '</div>'
+                + '<div style="padding:4px 18px 14px;text-align:center;">'
+                + '<button onclick="var w=$(`prevSellWrap`);w.style.display=w.style.display===`none`?``:`none`;this.textContent=w.style.display===``?`\u25b2 Hide previous`:`\u25bc ' + prevSell.length + ' previous`;"'
+                + ' style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;">'
+                + '\u25bc ' + prevSell.length + ' previous</button></div>';
+            }
+          }
+
+          scanBodyEl.innerHTML = html;
         }
       }
     } catch(_) {}
@@ -4112,27 +4075,29 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       }
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Run Opportunity Scan';
+      btn.textContent = 'Opportunity Scan';
     }
   }
 
   async function runSellScan() {
-    const btn = $('runSellScanBtn');
+    const btn = $('exitScanBtn');
+    if (!btn) return;
     btn.disabled = true;
     btn.textContent = 'Scanning...';
+    const scanBodyEl = $('scanBody');
     try {
       const r = await fetch('/api/v1/agent/run-sell-scan', { method: 'POST' });
       const d = await r.json();
       if (d.status === 'no_candidates') {
         btn.textContent = 'No exits needed';
-        setTimeout(() => { btn.textContent = 'Run Sell Scan'; }, 4000);
+        setTimeout(() => { btn.textContent = 'Exit Scan'; }, 4000);
+        await loadAgentAlerts();
       } else {
         await loadAgentAlerts();
-        showPage('agent');
       }
     } catch(e) {
       btn.textContent = 'Scan failed';
-      setTimeout(() => { btn.textContent = 'Run Sell Scan'; }, 3000);
+      setTimeout(() => { btn.textContent = 'Exit Scan'; }, 3000);
     } finally {
       btn.disabled = false;
     }
@@ -4966,7 +4931,7 @@ _DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
   }
 
   // ── Mute symbol handler (delegated from agentBody) ─────────────
-  $('agentBody').addEventListener('click', async e => {
+  $('agentBody')?.addEventListener('click', async e => {
     const btn = e.target.closest('.btn-mute');
     if (!btn) return;
     const sym = btn.dataset.sym;

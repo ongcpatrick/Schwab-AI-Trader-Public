@@ -4,41 +4,48 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI
 from fastapi.responses import ORJSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-# Module-level limiter — imported by route files that need per-endpoint rate limits
-limiter = Limiter(key_func=get_remote_address)
-
 from schwab_trader.core.settings import get_settings
+from schwab_trader.server.dependencies import require_auth
+from schwab_trader.server.routes.advisor import router as advisor_router
+from schwab_trader.server.routes.agent import router as agent_router
+from schwab_trader.server.routes.agent import trade_router
 from schwab_trader.server.routes.auth import router as auth_router
+from schwab_trader.server.routes.earnings import router as earnings_router
 from schwab_trader.server.routes.health import router as health_router
 from schwab_trader.server.routes.home import router as home_router
 from schwab_trader.server.routes.journal import router as journal_router
-from schwab_trader.server.routes.risk import router as risk_router
-from schwab_trader.server.routes.advisor import router as advisor_router
-from schwab_trader.server.routes.earnings import router as earnings_router
-from schwab_trader.server.routes.schwab import router as schwab_router
-from schwab_trader.server.routes.agent import router as agent_router, trade_router
-from schwab_trader.server.routes.performance import router as performance_router
 from schwab_trader.server.routes.news import router as news_router
+from schwab_trader.server.routes.performance import router as performance_router
+from schwab_trader.server.routes.risk import router as risk_router
+from schwab_trader.server.routes.schwab import router as schwab_router
 from schwab_trader.streaming.service import stream_service
 
 logger = logging.getLogger(__name__)
 
+limiter = Limiter(key_func=get_remote_address)
 _stop_event = threading.Event()
 
 
 def _scheduler_loop(interval_seconds: int) -> None:
     """Background thread: run agent check + buy scan + daily performance snapshot."""
     import time as _time
-    from schwab_trader.server.routes.agent import run_scheduled_check, run_scheduled_buy_scan, run_scheduled_sell_scan, _agent, _store
-    from schwab_trader.thesis import service as _thesis
-    from schwab_trader.server.routes.performance import _service as perf_service
+
     from schwab_trader.server.dependencies import get_broker_service as _gbk
+    from schwab_trader.server.routes.agent import (
+        _agent,
+        _store,
+        run_scheduled_buy_scan,
+        run_scheduled_check,
+        run_scheduled_sell_scan,
+    )
+    from schwab_trader.server.routes.performance import _service as perf_service
+    from schwab_trader.thesis import service as _thesis
 
     logger.info("Scheduler started (interval: %ds)", interval_seconds)
     if _stop_event.wait(timeout=30):
@@ -48,9 +55,38 @@ def _scheduler_loop(interval_seconds: int) -> None:
     _last_buy_scan_ts: float = 0.0
     _last_sell_scan_ts: float = 0.0
     _last_thesis_check_ts: float = 0.0
+    _last_token_warning_ts: float = 0.0
 
     while not _stop_event.wait(timeout=interval_seconds):
         settings = get_settings()
+
+        # ── refresh token expiry warning (Schwab 7-day limit) ────────
+        import time as _time2
+        if _time2.time() - _last_token_warning_ts >= 3600:  # check once per hour
+            try:
+                from schwab_trader.server.dependencies import get_token_store as _gts
+                stored_token = _gts().load()
+                if stored_token is not None:
+                    hours_left = stored_token.refresh_token_hours_remaining()
+                    if hours_left is not None and 0 < hours_left <= 24:
+                        auth_url = (settings.dashboard_url or "your-app.railway.app").rstrip("/") + "/auth/start"
+                        body = (
+                            f"ACTION REQUIRED: Schwab session expires in {hours_left:.0f}h.\n"
+                            f"Re-authorize now: {auth_url}"
+                        )
+                        if settings.twilio_account_sid and settings.alert_phone_number:
+                            from twilio.rest import Client as _Twilio
+                            _Twilio(settings.twilio_account_sid, settings.twilio_auth_token).messages.create(
+                                body=body,
+                                from_=settings.twilio_from_number,
+                                to=settings.alert_phone_number,
+                            )
+                            logger.warning("Sent refresh-token expiry warning SMS (%dh left)", hours_left)
+                        else:
+                            logger.warning("Schwab refresh token expires in %.0fh — re-auth at %s", hours_left, auth_url)
+                _last_token_warning_ts = _time2.time()
+            except Exception:
+                logger.exception("Scheduler: refresh token expiry check error")
 
         # ── agent portfolio check ─────────────────────────────────────
         logger.info("Running scheduled agent check...")
@@ -70,6 +106,7 @@ def _scheduler_loop(interval_seconds: int) -> None:
                 # Surface as a portfolio scan alert
                 import uuid as _uuid
                 from datetime import datetime as _dt
+
                 from schwab_trader.agent.monitor import Flag as _Flag
                 flags = [
                     _Flag(
@@ -168,6 +205,14 @@ def _bootstrap_token_from_env() -> None:
 
     settings = get_settings()
     token_path = settings.schwab_token_path
+
+    # Skip bootstrap if a token already exists on disk (e.g. persisted to a
+    # Railway volume after a successful auth).  Overwriting a live token with
+    # the (potentially stale) env-var copy would break the session.
+    if token_path.exists():
+        logger.info("Token file already present at %s — skipping SCHWAB_TOKEN_JSON bootstrap", token_path)
+        return
+
     try:
         # Validate it's parseable before writing
         json.loads(token_json)
@@ -203,8 +248,9 @@ async def lifespan(app: FastAPI):
         import time as _time
         _time.sleep(5)  # let server fully start
         try:
-            from schwab_trader.server.routes.performance import _service as perf_service, _store as perf_store
             from schwab_trader.server.dependencies import get_broker_service as _gbk
+            from schwab_trader.server.routes.performance import _service as perf_service
+            from schwab_trader.server.routes.performance import _store as perf_store
             broker = _gbk()
             # Always take today's snapshot
             perf_service.take_snapshot(broker)
@@ -234,15 +280,20 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-app.include_router(home_router)
-app.include_router(auth_router)
-app.include_router(health_router)
-app.include_router(journal_router, prefix="/api/v1/journal", tags=["journal"])
-app.include_router(risk_router, prefix="/api/v1/risk", tags=["risk"])
-app.include_router(schwab_router, prefix="/api/v1/schwab", tags=["schwab"])
-app.include_router(advisor_router, prefix="/api/v1/advisor", tags=["advisor"])
-app.include_router(earnings_router, prefix="/api/v1/earnings", tags=["earnings"])
-app.include_router(agent_router, prefix="/api/v1/agent", tags=["agent"])
-app.include_router(trade_router)  # /trade/approve/{token} and /trade/deny/{token}
-app.include_router(performance_router, prefix="/api/v1/performance", tags=["performance"])
-app.include_router(news_router, prefix="/api/v1/news", tags=["news"])
+_private = {"dependencies": [Depends(require_auth)]}
+
+# Public routes — no auth required
+app.include_router(home_router)   # /login, /logout, /auth/* handled inside; dashboard gated per-route
+app.include_router(auth_router)   # /login, /logout, /auth/start, /auth/callback
+app.include_router(health_router) # /health — uptime probe
+app.include_router(trade_router)  # /trade/approve/{token} /trade/deny/{token} — token-protected by design
+
+# Private routes — require session cookie or API key
+app.include_router(journal_router, prefix="/api/v1/journal", tags=["journal"], **_private)
+app.include_router(risk_router, prefix="/api/v1/risk", tags=["risk"], **_private)
+app.include_router(schwab_router, prefix="/api/v1/schwab", tags=["schwab"], **_private)
+app.include_router(advisor_router, prefix="/api/v1/advisor", tags=["advisor"], **_private)
+app.include_router(earnings_router, prefix="/api/v1/earnings", tags=["earnings"], **_private)
+app.include_router(agent_router, prefix="/api/v1/agent", tags=["agent"], **_private)
+app.include_router(performance_router, prefix="/api/v1/performance", tags=["performance"], **_private)
+app.include_router(news_router, prefix="/api/v1/news", tags=["news"], **_private)

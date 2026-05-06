@@ -22,7 +22,12 @@ class StubOAuthService:
         self.refreshed_token = refreshed_token
         self.refresh_calls = 0
 
-    def refresh_access_token(self, refresh_token: str) -> OAuthToken:
+    def refresh_access_token(
+        self,
+        refresh_token: str,
+        *,
+        refresh_token_created_at=None,
+    ) -> OAuthToken:
         assert refresh_token == "refresh-123"
         self.refresh_calls += 1
         return self.refreshed_token

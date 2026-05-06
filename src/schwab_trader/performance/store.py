@@ -112,7 +112,7 @@ class PerformanceStore:
     def _row_to_dict(row: sqlite3.Row | tuple) -> dict:
         keys = ["date", "timestamp", "portfolio_value", "cash_value",
                 "spy_close", "qqq_close", "positions_json"]
-        d = dict(zip(keys, row))
+        d = dict(zip(keys, row, strict=False))
         if d.get("positions_json"):
             try:
                 d["positions"] = json.loads(d["positions_json"])

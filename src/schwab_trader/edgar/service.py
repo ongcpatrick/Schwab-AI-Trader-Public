@@ -17,6 +17,8 @@ import json
 import logging
 import os
 import ssl
+import threading
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,10 +30,14 @@ import certifi
 logger = logging.getLogger(__name__)
 
 _EDGAR_BASE = "https://data.sec.gov"
-# EDGAR requires a real contact email in the User-Agent per their access policy.
-# Replace "your@email.com" with your actual email address before running.
-_HEADERS = {"User-Agent": "schwab-ai-trader your@email.com"}
+_HEADERS = {"User-Agent": "schwab-ai-trader your-email@example.com"}  # SEC requires a contact email
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+
+# Cache Form 4 results per ticker for 30 minutes — EDGAR rate-limits at 10 req/s
+# and results don't change minute-to-minute.
+_cache_lock = threading.Lock()
+_edgar_cache: dict[str, tuple[list[dict], float]] = {}
+_CACHE_TTL = 1800.0  # seconds
 
 
 def _get(url: str, timeout: int = 12) -> bytes:
@@ -119,6 +125,12 @@ def _parse_form4_xml(xml_bytes: bytes) -> list[dict]:
 
 def _fetch_insider_trades_for_symbol(ticker: str, days: int = 90) -> tuple[str, list[dict]]:
     """Fetch Form 4 purchase transactions for a single ticker from EDGAR."""
+    # Return cached result if still fresh
+    with _cache_lock:
+        cached = _edgar_cache.get(ticker)
+        if cached and time.monotonic() < cached[1]:
+            return ticker, cached[0]
+
     cik = _get_cik(ticker)
     if not cik:
         return ticker, []
@@ -136,7 +148,7 @@ def _fetch_insider_trades_for_symbol(ticker: str, days: int = 90) -> tuple[str, 
         primary_docs = filings.get("primaryDocument", [])
 
         xml_fetches = 0
-        for form, date, accession, doc in zip(forms, dates, accessions, primary_docs):
+        for form, date, accession, doc in zip(forms, dates, accessions, primary_docs, strict=False):
             if form != "4":
                 continue
             if date < cutoff:
@@ -149,6 +161,7 @@ def _fetch_insider_trades_for_symbol(ticker: str, days: int = 90) -> tuple[str, 
             raw_doc = os.path.basename(doc)
             xml_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{raw_doc}"
             try:
+                time.sleep(0.12)  # stay under EDGAR's 10 req/sec limit
                 xml_bytes = _get(xml_url, timeout=6)
                 xml_fetches += 1
                 trades = _parse_form4_xml(xml_bytes)
@@ -164,7 +177,10 @@ def _fetch_insider_trades_for_symbol(ticker: str, days: int = 90) -> tuple[str, 
     except Exception as exc:
         logger.warning("EDGAR submissions fetch %s: %s", ticker, exc)
 
-    return ticker, all_trades[:8]
+    result = all_trades[:8]
+    with _cache_lock:
+        _edgar_cache[ticker] = (result, time.monotonic() + _CACHE_TTL)
+    return ticker, result
 
 
 def get_form4_trades(symbols: list[str], days: int = 90) -> dict[str, list[dict]]:
@@ -173,7 +189,7 @@ def get_form4_trades(symbols: list[str], days: int = 90) -> dict[str, list[dict]
     Returns dict mapping symbol -> list of insider purchase dicts.
     """
     result: dict[str, list[dict]] = {}
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(_fetch_insider_trades_for_symbol, s, days): s for s in symbols}
         for fut in as_completed(futures):
             sym, trades = fut.result()

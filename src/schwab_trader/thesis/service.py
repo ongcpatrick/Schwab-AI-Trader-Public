@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -149,7 +149,7 @@ def check_all(
             logger.warning("ThesisTracker: check failed for %s: %s", sym, exc)
             continue
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         history_entry = {
             "checked_at": now,
             "status": result.get("status"),

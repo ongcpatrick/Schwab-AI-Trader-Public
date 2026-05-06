@@ -5,15 +5,13 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
+import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
 from schwab_trader.advisor.service import AdvisorService
 from schwab_trader.broker.service import SchwabBrokerService
 from schwab_trader.core.settings import get_settings
-import yfinance as yf
-
 from schwab_trader.earnings.service import get_earnings_calendar, get_earnings_fundamentals
 from schwab_trader.server.dependencies import get_broker_service
 

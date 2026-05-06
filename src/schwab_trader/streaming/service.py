@@ -200,8 +200,8 @@ class QuoteStreamService:
                 fields: dict = {"ts": time.time()}
 
                 # Helper — JSON keys are strings after parsing
-                def _get(fid: int):
-                    return entry.get(str(fid))
+                def _get(fid: int, current_entry=entry):
+                    return current_entry.get(str(fid))
 
                 # LEVELONE_EQUITIES verified field IDs
                 if _get(1) is not None:

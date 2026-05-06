@@ -13,13 +13,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = Path(__file__).resolve().parents[4] / ".alerts.json"
-_DATA_DIR = Path(__file__).resolve().parents[4] / ".data"
+_DATA_DIR = Path(__file__).resolve().parents[3] / ".data"
+_DEFAULT_PATH = _DATA_DIR / ".alerts.json"
 
 
 class AlertStore:
     def __init__(self, path: Path = _DEFAULT_PATH) -> None:
         self._path = path
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
 
     def load_all(self) -> list[dict]:

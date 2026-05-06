@@ -29,12 +29,13 @@ FastAPI server (24/7 local)          Claude Code routines (scheduled)
 
 ## Setup
 
-### 1. Required environment variable on each routine
+### 1. Required environment variables on each routine
 ```
-SERVER_URL=http://YOUR_SERVER_IP:8000
+SERVER_URL=https://your-app.railway.app          # your Railway deployment URL
+SCHWAB_TRADER_OPERATOR_API_KEY=your-operator-key  # same value as Railway env var
 ```
-This must be the publicly accessible URL of your FastAPI server.
-Options: Tailscale funnel, ngrok, or your home IP with port 8000 forwarded.
+Both are required. `SERVER_URL` tells the routine where the server is.
+`SCHWAB_TRADER_OPERATOR_API_KEY` authenticates the API calls the routine makes.
 
 ### 2. GitHub repo access
 Install the Claude GitHub App on this repo so cloud routines can clone and push.
@@ -66,8 +67,25 @@ export SERVER_URL=http://localhost:8000
 bash scripts/schwab_server.sh ping   # verify server is up
 ```
 
+## Trade Authorization Rules
+
+**Routines MUST NOT place trades without human approval except in genuine emergencies.**
+
+| Scenario | Allowed action |
+|----------|---------------|
+| Normal buy idea | Call `run-buy-scan` → email proposal → wait for user approval |
+| Normal sell idea | Document in RESEARCH-LOG, send SMS alert, wait for user decision |
+| **Crash/crisis** (circuit breakers hit, -20%+ intraday, systemic event) | `emergency-order` subcommand with `emergency=true` |
+
+The server enforces this: `SCHWAB_TRADER_REQUIRE_HUMAN_APPROVAL=true` blocks all direct orders unless `emergency=true` is explicitly set by the routine.
+
+**How to use emergency-order in a routine (crash scenario only):**
+```bash
+bash scripts/schwab_server.sh emergency-order SELL NVDA 5 0 "Circuit breakers triggered, S&P -7%, forced defensive exit per crash protocol"
+```
+
 ## Notes
-- Routines are research + memory only. Trade execution requires your explicit approval via SMS/email.
+- Routines are research + memory only for routine market conditions. Trade execution requires explicit approval via SMS/email.
 - The server's built-in scheduler handles buy scanning and exit monitoring between routine runs.
 - If a routine run fails (server unreachable, etc.), the next run recovers by reading git state.
 - Memory files are append-only dated sections — merge conflicts are nearly impossible.

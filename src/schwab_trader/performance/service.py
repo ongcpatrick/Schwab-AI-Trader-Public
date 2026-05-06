@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 import yfinance as yf
 
@@ -33,7 +33,7 @@ def _cov(a: list[float], b: list[float]) -> float:
     if n < 2:
         return 0.0
     ma, mb = sum(a) / n, sum(b) / n
-    return sum((x - ma) * (y - mb) for x, y in zip(a, b)) / (n - 1)
+    return sum((x - ma) * (y - mb) for x, y in zip(a, b, strict=False)) / (n - 1)
 
 
 class PerformanceService:
@@ -88,7 +88,7 @@ class PerformanceService:
             ]
 
             today = date.today().isoformat()
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
 
             snapshot = {
                 "date": today,
@@ -428,7 +428,6 @@ class PerformanceService:
             # Build {date_str → holdings} for every day from oldest to today
             date_to_state: dict[str, dict[str, float]] = {}
             cursor = oldest_date
-            state_idx = 0
             while cursor <= today:
                 d_str = cursor.isoformat()
                 # Find the most-recent snapshot at or before cursor

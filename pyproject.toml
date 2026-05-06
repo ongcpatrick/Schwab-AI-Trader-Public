@@ -19,6 +19,7 @@ dependencies = [
   "twilio>=9.10.5",
   "orjson>=3.9.0",
   "slowapi>=0.1.9",
+  "python-multipart>=0.0.9",
 ]
 
 [project.scripts]
@@ -42,3 +43,6 @@ exclude = ["everything-claude-code-main"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+# The dashboard embeds sizeable HTML/JS templates and LLM prompts where forced
+# 100-column wrapping makes the source harder to maintain than the long line.
+ignore = ["E501"]

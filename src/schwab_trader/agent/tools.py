@@ -8,6 +8,13 @@ import re as _re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+import pandas as pd
+import yfinance as yf
+
+from schwab_trader.broker.service import SchwabBrokerService
+from schwab_trader.earnings.service import get_earnings_calendar, get_earnings_fundamentals
+from schwab_trader.news.service import get_news_feed
+
 
 def _sanitize(text: str | None, max_len: int = 500) -> str:
     """Strip prompt-injection vectors from external text before passing to Claude.
@@ -26,13 +33,6 @@ def _sanitize(text: str | None, max_len: int = 500) -> str:
     text = _re.sub(r"<[^>]{0,200}>", "", text)
     # Truncate
     return text[:max_len]
-
-import pandas as pd
-import yfinance as yf
-
-from schwab_trader.broker.service import SchwabBrokerService
-from schwab_trader.earnings.service import get_earnings_calendar, get_earnings_fundamentals
-from schwab_trader.news.service import get_news_feed
 
 logger = logging.getLogger(__name__)
 
@@ -305,7 +305,12 @@ class ToolExecutor:
                 "total_pnl": round(total_pnl, 2),
                 "total_pct": round(total_pct, 1),
                 "day_pnl": round(p.get("currentDayProfitLoss") or 0, 2),
-                "day_pct": round(p.get("currentDayProfitLossPercentage") or 0, 2),
+                "day_pct": round(
+                    (p["currentDayProfitLoss"] / (mkt - p["currentDayProfitLoss"]) * 100)
+                    if (p.get("currentDayProfitLoss") and mkt and mkt != p.get("currentDayProfitLoss"))
+                    else (p.get("currentDayProfitLossPercentage") or 0),
+                    2,
+                ),
             })
 
         return json.dumps({

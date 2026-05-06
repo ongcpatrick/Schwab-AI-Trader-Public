@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import smtplib
 import ssl
+import urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -13,38 +15,46 @@ logger = logging.getLogger(__name__)
 _MAX_REASONING_CHARS = 320
 
 
-def send_sell_email(
-    proposals: list[dict],
-    *,
+def _send_via_resend(
+    api_key: str,
+    from_addr: str,
+    to_addr: str,
+    subject: str,
+    html: str,
+    plain: str,
+) -> bool:
+    """Send email via Resend HTTP API — works on Railway (no SMTP ports needed)."""
+    try:
+        import httpx
+        resp = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"from": f"Schwab Trader <{from_addr}>", "to": [to_addr],
+                  "subject": subject, "html": html, "text": plain},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        if result.get("id"):
+            logger.info("Resend email sent (id=%s) to %s", result["id"], to_addr)
+            return True
+        logger.error("Resend API returned no id: %s", result)
+        return False
+    except Exception as exc:
+        logger.error("Resend API failed: %s", exc)
+        return False
+
+
+def _send_via_smtp(
     smtp_host: str,
     smtp_port: int,
     smtp_user: str,
     smtp_password: str,
-    from_address: str,
-    to_address: str,
-    base_url: str,
+    from_addr: str,
+    to_addr: str,
+    msg: MIMEMultipart,
 ) -> bool:
-    """Send a minimal HTML email with full-width approve/deny buttons for sell proposals."""
-    if not proposals:
-        return False
-
-    symbols = [p["symbol"] for p in proposals]
-    total_proceeds = sum(
-        float(p.get("limit_price") or 0) * int(p.get("quantity") or 0)
-        for p in proposals
-    )
-    n = len(proposals)
-    sym_str = " · ".join(symbols)
-    proceeds_str = f"${total_proceeds:,.0f}" if total_proceeds else ""
-    subject = f"SELL {sym_str} — {n} proposal{'s' if n > 1 else ''}{f' · {proceeds_str}' if proceeds_str else ''}"
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = from_address
-    msg["To"] = to_address
-    msg.attach(MIMEText(_build_sell_plain(proposals, base_url), "plain"))
-    msg.attach(MIMEText(_build_sell_html(proposals, base_url, total_proceeds), "html"))
-
+    """Send via raw SMTP (works locally; may be blocked on some cloud hosts)."""
     def _ssl_ctx() -> ssl.SSLContext:
         try:
             import certifi  # type: ignore[import]
@@ -60,18 +70,60 @@ def send_sell_email(
         if smtp_port == 465:
             with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx) as server:
                 server.login(smtp_user, smtp_password)
-                server.sendmail(from_address, to_address, msg.as_string())
+                server.sendmail(from_addr, to_addr, msg.as_string())
         else:
             with smtplib.SMTP(smtp_host, smtp_port) as server:
                 server.ehlo()
                 server.starttls(context=ctx)
                 server.login(smtp_user, smtp_password)
-                server.sendmail(from_address, to_address, msg.as_string())
-        logger.info("Sell email sent to %s (%d proposal(s))", to_address, len(proposals))
+                server.sendmail(from_addr, to_addr, msg.as_string())
+        logger.info("SMTP email sent to %s", to_addr)
         return True
     except Exception as exc:
-        logger.error("Failed to send sell email: %s", exc)
+        logger.error("SMTP send failed: %s", exc)
         return False
+
+
+def send_sell_email(
+    proposals: list[dict],
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    from_address: str,
+    to_address: str,
+    base_url: str,
+    resend_api_key: str = "",
+) -> bool:
+    """Send a minimal HTML email with full-width approve/deny buttons for sell proposals."""
+    if not proposals:
+        return False
+
+    symbols = [p["symbol"] for p in proposals]
+    total_proceeds = sum(
+        float(p.get("limit_price") or 0) * int(p.get("quantity") or 0)
+        for p in proposals
+    )
+    n = len(proposals)
+    sym_str = " · ".join(symbols)
+    proceeds_str = f"${total_proceeds:,.0f}" if total_proceeds else ""
+    subject = f"SELL {sym_str} — {n} proposal{'s' if n > 1 else ''}{f' · {proceeds_str}' if proceeds_str else ''}"
+
+    plain = _build_sell_plain(proposals, base_url)
+    html  = _build_sell_html(proposals, base_url, total_proceeds)
+
+    # Try Resend first (works on Railway); fall back to SMTP
+    if resend_api_key:
+        return _send_via_resend(resend_api_key, from_address, to_address, subject, html, plain)
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_address
+    msg["To"] = to_address
+    msg.attach(MIMEText(plain, "plain"))
+    msg.attach(MIMEText(html, "html"))
+    return _send_via_smtp(smtp_host, smtp_port, smtp_user, smtp_password, from_address, to_address, msg)
 
 
 def _build_sell_plain(proposals: list[dict], base_url: str) -> str:
@@ -230,10 +282,11 @@ def send_approval_email(
     from_address: str,
     to_address: str,
     base_url: str,
+    resend_api_key: str = "",
 ) -> bool:
     """Send a minimal HTML email with full-width approve/deny buttons per proposal.
 
-    Returns True on success, False on any SMTP error.
+    Returns True on success, False on any error.
     """
     if not proposals:
         return False
@@ -248,40 +301,20 @@ def send_approval_email(
     cost_str = f"${total_cost:,.0f}" if total_cost else ""
     subject = f"BUY {sym_str} — {n} proposal{'s' if n > 1 else ''}{f' · {cost_str}' if cost_str else ''}"
 
+    plain = _build_plain(proposals, base_url)
+    html  = _build_html(proposals, base_url, total_cost)
+
+    # Try Resend first (works on Railway); fall back to SMTP
+    if resend_api_key:
+        return _send_via_resend(resend_api_key, from_address, to_address, subject, html, plain)
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = from_address
     msg["To"] = to_address
-    msg.attach(MIMEText(_build_plain(proposals, base_url), "plain"))
-    msg.attach(MIMEText(_build_html(proposals, base_url, total_cost), "html"))
-
-    def _ssl_ctx() -> ssl.SSLContext:
-        try:
-            import certifi  # type: ignore[import]
-            ctx = ssl.create_default_context(cafile=certifi.where())
-        except ImportError:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-        return ctx
-
-    try:
-        ctx = _ssl_ctx()
-        if smtp_port == 465:
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx) as server:
-                server.login(smtp_user, smtp_password)
-                server.sendmail(from_address, to_address, msg.as_string())
-        else:
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                server.ehlo()
-                server.starttls(context=ctx)
-                server.login(smtp_user, smtp_password)
-                server.sendmail(from_address, to_address, msg.as_string())
-        logger.info("Approval email sent to %s (%d proposal(s))", to_address, len(proposals))
-        return True
-    except Exception as exc:
-        logger.error("Failed to send approval email: %s", exc)
-        return False
+    msg.attach(MIMEText(plain, "plain"))
+    msg.attach(MIMEText(html, "html"))
+    return _send_via_smtp(smtp_host, smtp_port, smtp_user, smtp_password, from_address, to_address, msg)
 
 
 # ---------------------------------------------------------------------------

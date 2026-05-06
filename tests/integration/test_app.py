@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from schwab_trader.auth.browser_session import COOKIE_NAME, create_session
 from schwab_trader.auth.models import OAuthToken
 from schwab_trader.journal.models import JournalOverview, SyncRunStatus, SyncRunSummary
 from schwab_trader.server.app import app
@@ -11,6 +12,7 @@ from schwab_trader.server.dependencies import (
 )
 
 client = TestClient(app)
+client.cookies.set(COOKIE_NAME, create_session())
 
 
 def test_health_endpoint_returns_ok() -> None:
@@ -201,13 +203,14 @@ def test_callback_endpoint_exchanges_code_and_saves_token() -> None:
     try:
         client.get("/auth/start", follow_redirects=False)
         response = client.get(
-            f"/auth/callback?code=code-123&state={calls['state']}&session=session-xyz"
+            f"/auth/callback?code=code-123&state={calls['state']}&session=session-xyz",
+            follow_redirects=False,
         )
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 200
-    assert response.json()["message"] == "Schwab authorization completed."
+    assert response.status_code == 302
+    assert response.headers["location"] == "/dashboard"
     assert saved["token"].access_token == "access-123"
 
 

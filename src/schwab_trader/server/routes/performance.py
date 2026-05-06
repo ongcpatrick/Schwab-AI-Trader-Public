@@ -9,7 +9,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from schwab_trader.broker.service import SchwabBrokerService
-from schwab_trader.core.settings import get_settings
 from schwab_trader.performance.service import PerformanceService
 from schwab_trader.performance.store import PerformanceStore
 from schwab_trader.server.dependencies import get_broker_service

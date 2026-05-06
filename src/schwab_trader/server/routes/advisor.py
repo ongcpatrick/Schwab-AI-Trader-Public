@@ -1,7 +1,5 @@
 """Advisor chat endpoint with streaming."""
 
-import base64
-import io
 import json
 import subprocess
 import sys
@@ -72,7 +70,8 @@ def quick_take(
             if stripped.startswith("json"):
                 stripped = stripped[4:]
             stripped = stripped.rsplit("```", 1)[0].strip()
-        start = stripped.find("{"); end = stripped.rfind("}") + 1
+        start = stripped.find("{")
+        end = stripped.rfind("}") + 1
         if start != -1 and end > 0:
             return json.loads(stripped[start:end])
     except Exception:

@@ -1,13 +1,16 @@
 import re
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from schwab_trader.agent.store import AlertStore
+from schwab_trader.auth.browser_session import COOKIE_NAME, create_session
 from schwab_trader.server.app import app
 from schwab_trader.server.dependencies import get_broker_service
 from schwab_trader.server.routes import agent as agent_routes
 
 client = TestClient(app)
+client.cookies.set(COOKIE_NAME, create_session())
 
 
 def _proposal(*, proposal_id: str = "proposal-123", approval_token: str = "approve-123") -> dict:
@@ -126,6 +129,21 @@ def test_execute_proposal_blocks_when_risk_checks_fail(monkeypatch, tmp_path) ->
     proposal["quantity"] = 30.0
     proposal["limit_price"] = 100.0
     _install_store(monkeypatch, tmp_path, proposal)
+    monkeypatch.setattr(
+        agent_routes,
+        "get_settings",
+        lambda: SimpleNamespace(
+            live_order_kill_switch=False,
+            live_order_max_daily_loss_dollars=None,
+            live_order_max_open_positions=None,
+            live_order_max_order_notional_dollars=2_000,
+            live_order_max_single_trade_risk_dollars=None,
+            live_order_max_symbol_allocation_pct=None,
+            live_order_require_stop_loss_for_entries=False,
+            buy_scan_budget=2_000,
+            alert_concentration_pct=25.0,
+        ),
+    )
 
     class StubBrokerService:
         def get_primary_account_hash(self) -> str:

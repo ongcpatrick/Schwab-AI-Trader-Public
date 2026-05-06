@@ -19,7 +19,6 @@ import json
 import logging
 import ssl
 import urllib.request
-from datetime import datetime, timedelta
 
 import certifi
 
@@ -123,7 +122,6 @@ def get_macro_indicators(api_key: str) -> dict:
     fed = results.get("fed_funds_rate")
     spread = results.get("t10y2y_spread")
     cpi = results.get("cpi_yoy")
-    unemp = results.get("unemployment")
 
     signals = []
     if fed is not None:

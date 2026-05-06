@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import yfinance as yf
 from anthropic import Anthropic
@@ -33,7 +33,7 @@ def _parse_item(sym: str, item: dict) -> dict | None:
         if pub_str:
             try:
                 dt = datetime.strptime(pub_str[:19], "%Y-%m-%dT%H:%M:%S").replace(
-                    tzinfo=timezone.utc
+                    tzinfo=UTC
                 )
                 pub_ts = int(dt.timestamp())
                 published_str = dt.strftime("%b %d, %H:%M UTC")
@@ -46,7 +46,7 @@ def _parse_item(sym: str, item: dict) -> dict | None:
         link = item.get("link", "")
         pub_ts = item.get("providerPublishTime") or 0
         published_str = (
-            datetime.fromtimestamp(pub_ts, tz=timezone.utc).strftime("%b %d, %H:%M UTC")
+            datetime.fromtimestamp(pub_ts, tz=UTC).strftime("%b %d, %H:%M UTC")
             if pub_ts
             else ""
         )

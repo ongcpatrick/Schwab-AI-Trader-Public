@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 import yfinance as yf
@@ -21,7 +21,7 @@ _CACHE_PATH = Path("./.data/regime.json")
 _CACHE_TTL_HOURS = 4  # refresh at most every 4 hours
 
 
-class Regime(str, Enum):
+class Regime(StrEnum):
     BULL = "BULL"            # trending up, low vol, broad participation
     RECOVERY = "RECOVERY"    # above SMA200 but vol elevated or breadth lagging
     CORRECTION = "CORRECTION"  # short-term pullback within longer uptrend

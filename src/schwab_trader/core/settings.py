@@ -40,12 +40,23 @@ class Settings(BaseSettings):
     alert_concentration_pct: float = 25.0
     alert_gain_pct: float = 30.0
 
-    # Email notifications (smtplib — no extra dependencies)
+    # Email notifications — two providers, first one wins:
+    # 1. Resend (recommended on Railway): set SCHWAB_TRADER_RESEND_API_KEY.
+    #    Free tier → resend.com; no SMTP port needed, uses HTTPS.
+    # 2. SMTP fallback (works locally, blocked by some cloud hosts).
+    resend_api_key: str = ""
+    # Sender address for Resend. Must be a verified domain in your Resend account.
+    # Free-tier fallback that works without domain verification: onboarding@resend.dev
+    resend_from_address: str = "onboarding@resend.dev"
     email_smtp_host: str = ""
     email_smtp_port: int = 587
     email_smtp_user: str = ""
     email_smtp_password: str = ""
-    alert_email_address: str = ""   # recipient
+    alert_email_address: str = ""   # recipient for both providers
+    # Sender address for outgoing emails.
+    # Resend requires a verified domain — use onboarding@resend.dev for testing,
+    # or noreply@yourdomain.com once your domain is verified in the Resend dashboard.
+    email_from_address: str = "onboarding@resend.dev"
 
     # Buy-scan agent
     buy_scan_budget: float = 2000.0
@@ -87,6 +98,12 @@ class Settings(BaseSettings):
     # closed (503) so it never accidentally runs open.
     dashboard_password: str = ""
     operator_api_key: str = ""
+
+    # Human-approval gate — blocks the /direct-order endpoint used by cloud routines.
+    # When True (the default), autonomous bots CANNOT place orders; only trades that
+    # go through the proposal → email approval → /trade/approve/{token} flow will execute.
+    # Set to False only if you explicitly want the cloud bot to trade autonomously.
+    require_human_approval: bool = True
 
     # Live execution guardrails
     live_order_kill_switch: bool = False

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re as _re
 import socket
 import time as _time
 from datetime import UTC, datetime
@@ -10,8 +11,6 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
-import re as _re
-
 from pydantic import BaseModel, field_validator
 
 from schwab_trader.advisor.service import AdvisorService
@@ -25,13 +24,6 @@ from schwab_trader.server.dependencies import get_broker_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# ---------------------------------------------------------------------------
-# Rate limiting — import shared limiter from app factory
-# ---------------------------------------------------------------------------
-def _get_limiter():
-    from schwab_trader.server.app import limiter
-    return limiter
 
 # Cooldown lock: maps proposal_id/sell-key → last execution timestamp
 # Prevents double-click / duplicate submissions within 10 seconds
@@ -123,10 +115,17 @@ def run_check(
     return {"status": "no_flags", "message": "Portfolio looks clean — no actionable flags."}
 
 
+_ALERT_SENSITIVE_FIELDS = {"approval_token", "denial_token"}
+
+
 @router.get("/alerts")
 def list_alerts(limit: int = 20) -> list[dict]:
-    """Return recent alerts (latest first)."""
-    return _store.load_all()[:limit]
+    """Return recent alerts (latest first), with sensitive token fields stripped."""
+    alerts = _store.load_all()[:limit]
+    return [
+        {k: v for k, v in alert.items() if k not in _ALERT_SENSITIVE_FIELDS}
+        for alert in alerts
+    ]
 
 
 @router.post("/alerts/{alert_id}/approve")
@@ -155,7 +154,7 @@ def execute_proposal(
     proposal_id: str,
     request: Request,
     broker_service: Annotated[SchwabBrokerService, Depends(get_broker_service)],
-    overrides: ProposalExecuteOverrides = Body(default_factory=ProposalExecuteOverrides),
+    overrides: Annotated[ProposalExecuteOverrides | None, Body()] = None,
 ) -> dict:
     """Preview then execute a trade proposal after user confirmation.
 
@@ -170,6 +169,8 @@ def execute_proposal(
         raise HTTPException(status_code=404, detail="Proposal not found")
     if proposal.get("status") == "executed":
         raise HTTPException(status_code=409, detail="Proposal already executed")
+
+    overrides = overrides or ProposalExecuteOverrides()
 
     # Apply user overrides — copy so we don't mutate the stored proposal
     effective_proposal = dict(proposal)
@@ -311,8 +312,11 @@ def analyze_sell(
 
     try:
         result = _json.loads(cleaned)
-    except _json.JSONDecodeError:
-        raise HTTPException(status_code=502, detail=f"AI returned unparseable response: {raw[:200]}")
+    except _json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI returned unparseable response: {raw[:200]}",
+        ) from exc
 
     return result
 
@@ -351,6 +355,62 @@ def send_notification(body: Annotated[dict, Body()]) -> dict:
         dashboard_url=settings.dashboard_url,
     )
     return {"status": "sent" if sent else "failed"}
+
+
+@router.post("/notify-email")
+def send_email_notification(body: Annotated[dict, Body()]) -> dict:
+    """Send a plain-text summary email via Resend (preferred) or SMTP fallback.
+
+    Body: {"subject": "...", "text": "..."}
+    """
+    subject = str(body.get("subject", "")).strip()
+    text = str(body.get("text", "")).strip()
+    if not subject or not text:
+        raise HTTPException(status_code=422, detail="subject and text are required")
+
+    settings = get_settings()
+    to_addr = settings.alert_email_address
+    if not to_addr:
+        return {"status": "skipped", "reason": "alert_email_address not configured"}
+
+    html = (
+        "<html><body style='font-family:monospace;white-space:pre;background:#080b10;"
+        "color:#e6edf3;padding:24px;font-size:13px;line-height:1.6'>"
+        + text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        + "</body></html>"
+    )
+
+    from schwab_trader.notifications.email import _send_via_resend, _send_via_smtp
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    # Prefer Resend (works on Railway — no SMTP port blocking)
+    if settings.resend_api_key:
+        from_addr = getattr(settings, "email_from_address", "onboarding@resend.dev")
+        sent = _send_via_resend(settings.resend_api_key, from_addr, to_addr, subject, html, text)
+        if sent:
+            return {"status": "sent", "to": to_addr, "via": "resend"}
+        return {"status": "failed", "via": "resend"}
+
+    # Fall back to SMTP
+    if not all([settings.email_smtp_host, settings.email_smtp_user, settings.email_smtp_password]):
+        return {"status": "skipped", "reason": "Neither Resend nor SMTP configured"}
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = settings.email_smtp_user
+    msg["To"] = to_addr
+    msg.attach(MIMEText(text, "plain"))
+    msg.attach(MIMEText(html, "html"))
+    sent = _send_via_smtp(
+        settings.email_smtp_host, settings.email_smtp_port,
+        settings.email_smtp_user, settings.email_smtp_password,
+        settings.email_smtp_user, to_addr, msg,
+    )
+    if sent:
+        return {"status": "sent", "to": to_addr, "via": "smtp"}
+    return {"status": "failed", "via": "smtp"}
+
 
 
 @router.post("/place-sell-order")
@@ -395,6 +455,9 @@ class DirectOrderRequest(BaseModel):
     order_type: str = "LIMIT"
     limit_price: float | None = None
     reasoning: str = ""
+    # Set to True ONLY for genuine market-crash / emergency defensive actions.
+    # When require_human_approval=True, normal orders are blocked but emergency=True bypasses.
+    emergency: bool = False
 
     @field_validator("symbol")
     @classmethod
@@ -441,6 +504,22 @@ def direct_order(
         raise HTTPException(
             status_code=422,
             detail="reasoning is required for direct-order calls (document the trade thesis).",
+        )
+
+    settings = get_settings()
+    if settings.require_human_approval and not req.emergency:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Direct orders are disabled (require_human_approval=True). "
+                "All routine trades must go through the email approval flow. "
+                "Set emergency=true only for genuine crash/crisis defensive actions."
+            ),
+        )
+    if req.emergency:
+        logger.warning(
+            "EMERGENCY DIRECT ORDER bypassing human approval gate: %s %s x%s — %s",
+            req.action, req.symbol, req.quantity, req.reasoning[:200],
         )
 
     cooldown_key = f"direct:{req.action}:{req.symbol}:{req.quantity}"
@@ -514,9 +593,11 @@ def _send_buy_notifications(alert: dict, settings) -> None:
         except Exception as exc:
             logger.warning("Buy scan SMS failed: %s", exc)
 
-    # Email — only send if at least one proposal clears the minimum upside threshold
-    if all([settings.email_smtp_host, settings.email_smtp_user,
-            settings.email_smtp_password, settings.alert_email_address]):
+    # Email — Resend (Railway-compatible) takes priority over SMTP
+    _has_resend = bool(settings.resend_api_key and settings.alert_email_address)
+    _has_smtp   = all([settings.email_smtp_host, settings.email_smtp_user,
+                       settings.email_smtp_password, settings.alert_email_address])
+    if _has_resend or _has_smtp:
         min_upside = settings.email_min_upside_pct
         qualifying = [
             p for p in proposals
@@ -536,9 +617,10 @@ def _send_buy_notifications(alert: dict, settings) -> None:
                     smtp_port=settings.email_smtp_port,
                     smtp_user=settings.email_smtp_user,
                     smtp_password=settings.email_smtp_password,
-                    from_address=settings.email_smtp_user,
+                    from_address=settings.resend_from_address if settings.resend_api_key else (settings.email_smtp_user or settings.alert_email_address),
                     to_address=settings.alert_email_address,
                     base_url=base_url,
+                    resend_api_key=settings.resend_api_key,
                 )
                 if sent:
                     _store.mark_email_sent(alert["id"])
@@ -578,9 +660,11 @@ def _send_sell_notifications(alert: dict, settings) -> None:
         except Exception as exc:
             logger.warning("Sell scan SMS failed: %s", exc)
 
-    # Email
-    if all([settings.email_smtp_host, settings.email_smtp_user,
-            settings.email_smtp_password, settings.alert_email_address]):
+    # Email — Resend (Railway-compatible) takes priority over SMTP
+    _has_resend = bool(settings.resend_api_key and settings.alert_email_address)
+    _has_smtp   = all([settings.email_smtp_host, settings.email_smtp_user,
+                       settings.email_smtp_password, settings.alert_email_address])
+    if _has_resend or _has_smtp:
         try:
             from schwab_trader.notifications.email import send_sell_email
             sent = send_sell_email(
@@ -589,9 +673,10 @@ def _send_sell_notifications(alert: dict, settings) -> None:
                 smtp_port=settings.email_smtp_port,
                 smtp_user=settings.email_smtp_user,
                 smtp_password=settings.email_smtp_password,
-                from_address=settings.email_smtp_user,
+                from_address=settings.resend_from_address if settings.resend_api_key else (settings.email_smtp_user or settings.alert_email_address),
                 to_address=settings.alert_email_address,
                 base_url=base_url,
+                resend_api_key=settings.resend_api_key,
             )
             if sent:
                 _store.mark_email_sent(alert["id"])
@@ -712,11 +797,10 @@ def get_insider_feed(symbols: str = "") -> dict:
     If symbols is empty, uses the configured buy_scan_watchlist.
     Returns buys AND sells so the user can see the full picture.
     """
-    import urllib.request
-    import json as _json
-    from datetime import datetime, timedelta
-    import yfinance as yf
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    from datetime import datetime, timedelta
+
+    import yfinance as yf
 
     settings = get_settings()
     if symbols.strip():
@@ -724,7 +808,6 @@ def get_insider_feed(symbols: str = "") -> dict:
     else:
         sym_list = [s.strip().upper() for s in settings.buy_scan_watchlist.split(",") if s.strip()]
 
-    symbol_set = set(sym_list)
     cutoff_dt = datetime.now() - timedelta(days=180)
 
     # ── Corporate insiders (SEC EDGAR Form 4 — primary source) ──────────────
@@ -1105,9 +1188,73 @@ def approve_by_token_post(
     )
 
 
+def _deny_confirm_html(proposal: dict, token: str) -> str:
+    action = proposal.get("action", "BUY")
+    symbol = proposal.get("symbol", "")
+    qty = int(proposal.get("quantity", 0))
+    price = proposal.get("limit_price")
+    price_str = f"@ ${float(price):.2f} LIMIT" if price else "@ MARKET"
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Cancel Trade</title>
+  <style>
+    body{{background:#080B10;color:#E2E8F0;font-family:-apple-system,sans-serif;
+         display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+    .card{{background:#0E1318;border:1px solid #1E2732;border-radius:16px;
+           padding:36px 32px;max-width:400px;width:100%;text-align:center}}
+    h2{{margin:0 0 8px;font-size:20px}}
+    .order{{background:#0a1628;border:1px solid #1E2732;border-radius:10px;
+            padding:14px;margin:20px 0;font-size:15px;color:#94A3B8}}
+    .order strong{{color:#E2E8F0;font-size:17px;display:block;margin-bottom:4px}}
+    .btn{{display:block;width:100%;padding:12px;border-radius:8px;border:none;
+          font-size:15px;font-weight:600;cursor:pointer;margin-top:10px}}
+    .deny{{background:#EF4444;color:#fff}}
+    .deny:hover{{background:#DC2626}}
+    .cancel{{background:#1E2732;color:#94A3B8;text-decoration:none;
+             display:block;padding:10px;border-radius:8px;margin-top:8px;font-size:14px}}
+  </style>
+</head>
+<body>
+<div class="card">
+  <h2>Cancel this trade?</h2>
+  <p style="color:#94A3B8;font-size:14px;margin:0">This will permanently cancel the proposal.</p>
+  <div class="order">
+    <strong>{action} {qty} {symbol} {price_str}</strong>
+    Proposed by AI agent
+  </div>
+  <form method="post" action="/trade/deny/{token}">
+    <button class="btn deny" type="submit">Yes, cancel this trade</button>
+  </form>
+  <a class="cancel" href="javascript:window.close()">Keep it — go back</a>
+</div>
+</body>
+</html>"""
+
+
 @trade_router.get("/trade/deny/{token}", response_class=HTMLResponse)
+def deny_by_token_confirm(token: str) -> HTMLResponse:
+    """Show a confirmation page before cancelling — prevents link-scanner accidents."""
+    proposal, _ = _store.find_proposal_by_token(token)
+    if not proposal:
+        return HTMLResponse(
+            _result_html("Link Not Found", "This link is invalid.", success=False),
+            status_code=404,
+        )
+    if proposal.get("status") != "pending":
+        action = proposal.get("action", "BUY")
+        return HTMLResponse(_result_html(
+            "Already Resolved",
+            f"The {action} proposal for {proposal.get('symbol', '')} has already been {proposal.get('status', 'resolved')}.",
+            success=False,
+        ))
+    return HTMLResponse(_deny_confirm_html(proposal, token))
+
+
+@trade_router.post("/trade/deny/{token}", response_class=HTMLResponse)
 def deny_by_token(token: str) -> HTMLResponse:
-    """One-click trade denial from SMS/email link."""
+    """Execute the denial after confirmation."""
     proposal, _ = _store.find_proposal_by_token(token)
     if not proposal:
         return HTMLResponse(
@@ -1118,7 +1265,7 @@ def deny_by_token(token: str) -> HTMLResponse:
         _store.update_proposal_status(proposal["id"], "cancelled")
     action = proposal.get("action", "BUY")
     return HTMLResponse(_result_html(
-        "Trade Denied",
+        "Trade Cancelled",
         f"The {action} proposal for {proposal.get('symbol', '')} has been cancelled.",
         success=False,
     ))
@@ -1195,12 +1342,162 @@ def agent_status() -> dict:
     }
 
 
+class SendEmailRequest(BaseModel):
+    subject: str
+    body: str  # plain text — server wraps in a simple HTML card
+
+
+@router.post("/send-email")
+def send_email_notification(req: SendEmailRequest) -> dict:
+    """Send a plain-text notification email via the configured provider (Resend or SMTP).
+
+    Used by cloud routines to email research summaries, daily P&L, and alerts
+    without going through the proposal/approval flow.
+    """
+    settings = get_settings()
+    _has_resend = bool(settings.resend_api_key and settings.alert_email_address)
+    _has_smtp   = all([settings.email_smtp_host, settings.email_smtp_user,
+                       settings.email_smtp_password, settings.alert_email_address])
+
+    if not (_has_resend or _has_smtp):
+        raise HTTPException(status_code=503, detail="No email provider configured.")
+
+    if not req.subject.strip() or not req.body.strip():
+        raise HTTPException(status_code=422, detail="subject and body are required.")
+
+    # Wrap plain text body in a minimal dark HTML card
+    escaped_body = req.body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#080b10;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr><td align="center" style="padding:28px 16px 48px;">
+      <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+        <tr><td style="background:#0e1318;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:24px;">
+          <div style="font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:#2563eb;margin-bottom:14px;">Schwab AI Trader</div>
+          <div style="font-size:14px;color:#e6edf3;line-height:1.75;font-variant-numeric:tabular-nums;white-space:pre-wrap;">{escaped_body}</div>
+          <div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.06);">
+            <a href="{_get_base_url(settings)}/dashboard" style="font-size:12px;color:#2563eb;text-decoration:none;">Open dashboard</a>
+          </div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+
+    from schwab_trader.notifications.email import _send_via_resend, _send_via_smtp
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    if _has_resend:
+        from_addr = settings.resend_from_address
+        ok = _send_via_resend(settings.resend_api_key, from_addr, settings.alert_email_address, req.subject, html, req.body)
+        if not ok:
+            raise HTTPException(status_code=502, detail="Resend API error — check SCHWAB_TRADER_RESEND_API_KEY.")
+        return {"sent": True, "provider": "resend", "to": settings.alert_email_address}
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = req.subject
+    msg["From"]    = settings.email_smtp_user
+    msg["To"]      = settings.alert_email_address
+    msg.attach(MIMEText(req.body, "plain"))
+    msg.attach(MIMEText(html, "html"))
+    ok = _send_via_smtp(
+        settings.email_smtp_host, settings.email_smtp_port,
+        settings.email_smtp_user, settings.email_smtp_password,
+        settings.email_smtp_user, settings.alert_email_address, msg,
+    )
+    if not ok:
+        raise HTTPException(status_code=502, detail="SMTP send failed.")
+    return {"sent": True, "provider": "smtp", "to": settings.alert_email_address}
+
+
+@router.post("/test-email")
+def test_email() -> dict:
+    """Send a test email using the currently configured provider (Resend or SMTP).
+
+    Returns {"sent": true, "provider": "resend"|"smtp", "to": "..."} on success.
+    Raises 503 if no email provider is configured.
+    """
+    settings = get_settings()
+
+    _has_resend = bool(settings.resend_api_key and settings.alert_email_address)
+    _has_smtp   = all([settings.email_smtp_host, settings.email_smtp_user,
+                       settings.email_smtp_password, settings.alert_email_address])
+
+    if not (_has_resend or _has_smtp):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No email provider configured. Set SCHWAB_TRADER_RESEND_API_KEY + "
+                "SCHWAB_TRADER_ALERT_EMAIL_ADDRESS (recommended), or SMTP vars."
+            ),
+        )
+
+    base_url = _get_base_url(settings)
+    subject  = "Schwab Trader — email test"
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#080b10;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr><td align="center" style="padding:40px 16px;">
+      <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+        <tr><td style="background:#0e1318;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:28px 24px;">
+          <div style="font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:#2563eb;margin-bottom:12px;">Schwab AI Trader</div>
+          <div style="font-size:20px;font-weight:800;color:#ffffff;margin-bottom:8px;">Email is working</div>
+          <div style="font-size:13px;color:#8b949e;line-height:1.6;margin-bottom:20px;">
+            Your trader will send buy proposals, sell alerts, and research summaries to this address.
+            Each proposal will include <strong style="color:#e6edf3;">Approve</strong> and <strong style="color:#e6edf3;">Deny</strong> buttons.
+          </div>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr><td align="center" bgcolor="#166534" style="border-radius:7px;">
+              <a href="{base_url}/dashboard" style="display:block;padding:12px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;text-align:center;">Open Dashboard</a>
+            </td></tr>
+          </table>
+          <div style="font-size:11px;color:#484f58;margin-top:16px;">Sent from {base_url}</div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+    plain = "Schwab Trader — email is working. Open your dashboard: " + base_url + "/dashboard"
+
+    from schwab_trader.notifications.email import _send_via_resend, _send_via_smtp
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    if _has_resend:
+        from_addr = settings.alert_email_address
+        ok = _send_via_resend(settings.resend_api_key, from_addr, settings.alert_email_address, subject, html, plain)
+        if not ok:
+            raise HTTPException(status_code=502, detail="Resend API returned an error — check SCHWAB_TRADER_RESEND_API_KEY.")
+        return {"sent": True, "provider": "resend", "to": settings.alert_email_address}
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = settings.email_smtp_user
+    msg["To"]      = settings.alert_email_address
+    msg.attach(MIMEText(plain, "plain"))
+    msg.attach(MIMEText(html, "html"))
+    from schwab_trader.notifications.email import _send_via_smtp as _smtp_fn
+    ok = _smtp_fn(
+        settings.email_smtp_host, settings.email_smtp_port,
+        settings.email_smtp_user, settings.email_smtp_password,
+        settings.email_smtp_user, settings.alert_email_address, msg,
+    )
+    if not ok:
+        raise HTTPException(status_code=502, detail="SMTP send failed — check SMTP credentials and server logs.")
+    return {"sent": True, "provider": "smtp", "to": settings.alert_email_address}
+
+
 @router.get("/macro")
 def get_macro() -> dict:
     """Return current market regime snapshot: VIX, SPY/QQQ vs 200MA, sector ETF performance."""
     try:
         from schwab_trader.agent.tools import ToolExecutor
-        from schwab_trader.broker.service import SchwabBrokerService as _BS
         # ToolExecutor only needs broker for stock tools — macro uses yfinance exclusively
         executor = ToolExecutor(broker_service=None)  # type: ignore[arg-type]
         import json
@@ -1208,4 +1505,4 @@ def get_macro() -> dict:
         return json.loads(raw)
     except Exception as exc:
         logger.exception("Macro context fetch failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

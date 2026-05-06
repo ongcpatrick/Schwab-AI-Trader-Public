@@ -125,9 +125,24 @@ Memory persistence: routines commit memory/*.md to git after each run.
 Still runs the full ExecutionService path: kill switch → risk checks → preview → place.
 Requires a non-empty `reasoning` field (document the thesis).
 
+## ⚠️ CRITICAL: NO AUTONOMOUS TRADE EXECUTION
+**Routines (pre-market, market-open, midday, daily-summary) MUST NEVER call `direct-order` or
+`place-sell-order` directly.** All trades — buys AND sells, including mechanical rule-based actions
+like stop-losses and trims — require operator approval via the email/SMS flow before executing.
+
+**The only permitted trade actions in routines:**
+- `run-buy-scan` — generates buy proposals sent for email/SMS approval
+- `run-sell-scan` — generates sell proposals sent for email/SMS approval
+- Document and flag rule breaches in the trade log; do NOT execute them unilaterally
+
+**Why:** The operator may be asleep, unavailable, or may disagree with the specific execution.
+Even a -20% "hard exit" must be sent as an email proposal, not executed silently.
+The proposal flow exists precisely so the operator approves every real-money action.
+
 ## What NOT to Do
 - Do not use React, Vue, or any frontend framework — this is intentionally vanilla JS
 - Do not add emojis to the dashboard — use Lucide SVG icons only
 - Do not import `get_settings()` without calling `.cache_clear()` after writing `.env`
 - Do not call `place_order()` directly — always go through `ExecutionService` for risk checks
 - Do not source `.env` in cloud routines — env vars are already in the process environment
+- **Do not call `direct-order` or `place-sell-order` from any routine** — use scan endpoints only
